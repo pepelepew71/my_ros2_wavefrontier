@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pdb
-import sys
+from enum import Enum
+import pathlib
+import sys; sys.path.append(str(pathlib.Path(__file__).parent.absolute()))
 import time
 
 from action_msgs.msg import GoalStatus
@@ -22,24 +23,21 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav2_msgs.action import FollowWaypoints
 from nav2_msgs.srv import ManageLifecycleNodes
 from nav2_msgs.srv import GetCostmap
-from nav2_msgs.msg import Costmap
+# from nav2_msgs.msg import Costmap
 from nav_msgs.msg  import OccupancyGrid
 from nav_msgs.msg import Odometry
+from visualization_msgs.msg import MarkerArray
 
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy
-from rclpy.qos import QoSProfile
+# from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy
+# from rclpy.qos import QoSProfile
 
-from enum import Enum
-
-import numpy as np
-
-import math
-
-OCC_THRESHOLD = 10
-MIN_FRONTIER_SIZE = 5
+# from my_ros2_wavefrontier import utils
+# from my_ros2_wavefrontier import frontier
+import utils
+import frontier
 
 class Costmap2d():
     class CostValues(Enum):
@@ -66,207 +64,24 @@ class Costmap2d():
     def __getIndex(self, mx, my):
         return my * self.map.metadata.size_x + mx
 
-class OccupancyGrid2d():
-    class CostValues(Enum):
-        FreeSpace = 0
-        InscribedInflated = 100
-        LethalObstacle = 100
-        NoInformation = -1
-
-    def __init__(self, map):
-        self.map = map
-
-    def getCost(self, mx, my):
-        return self.map.data[self.__getIndex(mx, my)]
-
-    def getSize(self):
-        return (self.map.info.width, self.map.info.height)
-
-    def getSizeX(self):
-        return self.map.info.width
-
-    def getSizeY(self):
-        return self.map.info.height
-
-    def mapToWorld(self, mx, my):
-        wx = self.map.info.origin.position.x + (mx + 0.5) * self.map.info.resolution
-        wy = self.map.info.origin.position.y + (my + 0.5) * self.map.info.resolution
-
-        return (wx, wy)
-
-    def worldToMap(self, wx, wy):
-        if (wx < self.map.info.origin.position.x or wy < self.map.info.origin.position.y):
-            raise Exception("World coordinates out of bounds")
-
-        mx = int((wx - self.map.info.origin.position.x) / self.map.info.resolution)
-        my = int((wy - self.map.info.origin.position.y) / self.map.info.resolution)
-
-        if  (my > self.map.info.height or mx > self.map.info.width):
-            raise Exception("Out of bounds")
-
-        return (mx, my)
-
-    def __getIndex(self, mx, my):
-        return my * self.map.info.width + mx
-
-class FrontierCache():
-    cache = {}
-
-    def getPoint(self, x, y):
-        idx = self.__cantorHash(x, y)
-
-        if idx in self.cache:
-            return self.cache[idx]
-
-        self.cache[idx] = FrontierPoint(x, y)
-        return self.cache[idx]
-
-    def __cantorHash(self, x, y):
-        return (((x + y) * (x + y + 1)) / 2) + y
-
-    def clear(self):
-        self.cache = {}
-
-class FrontierPoint():
-    def __init__(self, x, y):
-        self.classification = 0
-        self.mapX = x
-        self.mapY = y
-
-def centroid(arr):
-    arr = np.array(arr)
-    length = arr.shape[0]
-    sum_x = np.sum(arr[:, 0])
-    sum_y = np.sum(arr[:, 1])
-    return sum_x/length, sum_y/length
-
-def findFree(mx, my, costmap):
-    fCache = FrontierCache()
-
-    bfs = [fCache.getPoint(mx, my)]
-
-    while len(bfs) > 0:
-        loc = bfs.pop(0)
-
-        if costmap.getCost(loc.mapX, loc.mapY) == OccupancyGrid2d.CostValues.FreeSpace.value:
-            return (loc.mapX, loc.mapY)
-
-        for n in getNeighbors(loc, costmap, fCache):
-            if n.classification & PointClassification.MapClosed.value == 0:
-                n.classification = n.classification | PointClassification.MapClosed.value
-                bfs.append(n)
-
-    return (mx, my)
-
-def getFrontier(pose, costmap, logger):
-    fCache = FrontierCache()
-
-    fCache.clear()
-
-    mx, my = costmap.worldToMap(pose.position.x, pose.position.y)
-
-    freePoint = findFree(mx, my, costmap)
-    start = fCache.getPoint(freePoint[0], freePoint[1])
-    start.classification = PointClassification.MapOpen.value
-    mapPointQueue = [start]
-
-    frontiers = []
-
-    while len(mapPointQueue) > 0:
-        p = mapPointQueue.pop(0)
-
-        if p.classification & PointClassification.MapClosed.value != 0:
-            continue
-
-        if isFrontierPoint(p, costmap, fCache):
-            p.classification = p.classification | PointClassification.FrontierOpen.value
-            frontierQueue = [p]
-            newFrontier = []
-
-            while len(frontierQueue) > 0:
-                q = frontierQueue.pop(0)
-
-                if q.classification & (PointClassification.MapClosed.value | PointClassification.FrontierClosed.value) != 0:
-                    continue
-
-                if isFrontierPoint(q, costmap, fCache):
-                    newFrontier.append(q)
-
-                    for w in getNeighbors(q, costmap, fCache):
-                        if w.classification & (PointClassification.FrontierOpen.value | PointClassification.FrontierClosed.value | PointClassification.MapClosed.value) == 0:
-                            w.classification = w.classification | PointClassification.FrontierOpen.value
-                            frontierQueue.append(w)
-
-                q.classification = q.classification | PointClassification.FrontierClosed.value
-
-
-            newFrontierCords = []
-            for x in newFrontier:
-                x.classification = x.classification | PointClassification.MapClosed.value
-                newFrontierCords.append(costmap.mapToWorld(x.mapX, x.mapY))
-
-            if len(newFrontier) > MIN_FRONTIER_SIZE:
-                frontiers.append(centroid(newFrontierCords))
-
-        for v in getNeighbors(p, costmap, fCache):
-            if v.classification & (PointClassification.MapOpen.value | PointClassification.MapClosed.value) == 0:
-                if any(costmap.getCost(x.mapX, x.mapY) == OccupancyGrid2d.CostValues.FreeSpace.value for x in getNeighbors(v, costmap, fCache)):
-                    v.classification = v.classification | PointClassification.MapOpen.value
-                    mapPointQueue.append(v)
-
-        p.classification = p.classification | PointClassification.MapClosed.value
-
-    return frontiers
-
-
-def getNeighbors(point, costmap, fCache):
-    neighbors = []
-
-    for x in range(point.mapX - 1, point.mapX + 2):
-        for y in range(point.mapY - 1, point.mapY + 2):
-            if (x > 0 and x < costmap.getSizeX() and y > 0 and y < costmap.getSizeY()):
-                neighbors.append(fCache.getPoint(x, y))
-
-    return neighbors
-
-def isFrontierPoint(point, costmap, fCache):
-    if costmap.getCost(point.mapX, point.mapY) != OccupancyGrid2d.CostValues.NoInformation.value:
-        return False
-
-    hasFree = False
-    for n in getNeighbors(point, costmap, fCache):
-        cost = costmap.getCost(n.mapX, n.mapY)
-
-        if cost > OCC_THRESHOLD:
-            return False
-
-        if cost == OccupancyGrid2d.CostValues.FreeSpace.value:
-            hasFree = True
-
-    return hasFree
-
-class PointClassification(Enum):
-    MapOpen = 1
-    MapClosed = 2
-    FrontierOpen = 4
-    FrontierClosed = 8
 
 class WaypointFollowerTest(Node):
 
     def __init__(self):
-        super().__init__(node_name='nav2_waypoint_tester', namespace='')
+        super().__init__(node_name='wave_frontier_follower', namespace='')
         self.waypoints = None
         self.readyToMove = True
         self.currentPose = None
         self.action_client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
         self.lastWaypoint = None
-        # self.action_client = ActionClient(self, FollowWaypoints, 'FollowWaypoints')
-        self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
-                                                      'initialpose', 10)
+        self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
+        self.pub_waypoints = self.create_publisher(PoseStamped, 'waypoints', 1)
+        self.pub_markers_frontiers = self.create_publisher(MarkerArray, 'markers_frontiers', 1)
 
         self.costmapClient = self.create_client(GetCostmap, '/global_costmap/get_costmap')
         while not self.costmapClient.wait_for_service(timeout_sec=1.0):
             self.info_msg('service not available, waiting again...')
+
         self.initial_pose_received = False
         self.goal_handle = None
 
@@ -277,34 +92,36 @@ class WaypointFollowerTest(Node):
         #   depth=1)
 
         # self.model_pose_sub = self.create_subscription(Odometry,'/odom', self.poseCallback, pose_qos)
+        self.model_pose_sub = self.create_subscription(Odometry, '/odom', self.poseCallback, 1)
 
         # # self.costmapSub = self.create_subscription(Costmap(), '/global_costmap/costmap_raw', self.costmapCallback, pose_qos)
         # self.costmapSub = self.create_subscription(OccupancyGrid(), '/map', self.occupancyGridCallback, pose_qos)
-
         self.costmapSub = self.create_subscription(OccupancyGrid(), '/map', self.occupancyGridCallback, 1)
-        self.model_pose_sub = self.create_subscription(Odometry, '/odom', self.poseCallback, 1)
 
         self.costmap = None
 
         self.get_logger().info('Running Waypoint Test')
 
     def occupancyGridCallback(self, msg):
-        self.costmap = OccupancyGrid2d(msg)
+        self.costmap = frontier.OccupancyGrid2d(msg)
 
     def moveToFrontiers(self):
-        frontiers = getFrontier(self.currentPose, self.costmap, self.get_logger())
+        frontiers = frontier.getFrontier(self.currentPose, self.costmap, self.currentPose, self.get_logger())
+
+        msg_markers_delete_all = utils.Rviz.get_msg_markers_delete_all()
+        self.pub_markers_frontiers.publish(msg_markers_delete_all)
+
+        msg_markers_frontiers = utils.Rviz.get_msg_markers_frontiers(frontiers=frontiers)
+        self.pub_markers_frontiers.publish(msg_markers_frontiers)
 
         if len(frontiers) == 0:
             self.info_msg('No More Frontiers')
             return
 
+        count = [len(points) for points in frontiers]
+        index = count.index(max(count))
         location = None
-        largestDist = 0
-        for f in frontiers:
-            dist = math.sqrt(((f[0] - self.currentPose.position.x)**2) + ((f[1] - self.currentPose.position.y)**2))
-            if  dist > largestDist:
-                largestDist = dist
-                location = [f]
+        location = [utils.get_centroid(frontiers[index])]
 
         #worldFrontiers = [self.costmap.mapToWorld(f[0], f[1]) for f in frontiers]
         self.info_msg(f'World points {location}')
@@ -314,6 +131,7 @@ class WaypointFollowerTest(Node):
         action_request.poses = self.waypoints
 
         self.info_msg('Sending goal request...')
+        self.pub_waypoints.publish(self.waypoints[0])
         send_goal_future = self.action_client.send_goal_async(action_request)
         try:
             rclpy.spin_until_future_complete(self, send_goal_future)
@@ -323,7 +141,7 @@ class WaypointFollowerTest(Node):
 
         if not self.goal_handle.accepted:
             self.error_msg('Goal rejected')
-            return
+            return None
 
         self.info_msg('Goal accepted')
 
@@ -336,6 +154,14 @@ class WaypointFollowerTest(Node):
             result = get_result_future.result().result
         except Exception as e:
             self.error_msg('Service call failed %r' % (e,))
+
+        if status != GoalStatus.STATUS_SUCCEEDED:
+            self.info_msg('Goal failed with status code: {0}'.format(status))
+            # return False
+
+        if len(result.missed_waypoints) > 0:
+            self.info_msg('Goal failed to process all waypoints, missed {0} wps.'.format(len(result.missed_waypoints)))
+            # return False
 
         #self.currentPose = self.waypoints[len(self.waypoints) - 1].pose
 
@@ -350,7 +176,7 @@ class WaypointFollowerTest(Node):
                 if self.costmap.getCost(x, y) == 255:
                     unknowns = unknowns + 1
         self.get_logger().info(f'Unknowns {unknowns}')
-        self.get_logger().info(f'Got Costmap {len(getFrontier(None, self.costmap, self.get_logger()))}')
+        self.get_logger().info(f'Got Costmap {len(frontier.getFrontier(None, self.costmap, self.get_logger()))}')
 
     def dumpCostmap(self):
         costmapReq = GetCostmap.Request()
@@ -365,16 +191,15 @@ class WaypointFollowerTest(Node):
         self.init_pose.header.frame_id = 'map'
         self.currentPose = self.init_pose.pose.pose
         self.publishInitialPose()
-        time.sleep(5)
+        time.sleep(1)
 
     def poseCallback(self, msg):
         # self.info_msg('Received amcl_pose')
         self.currentPose = msg.pose.pose
         self.initial_pose_received = True
 
-
     def setWaypoints(self, waypoints):
-        self.waypoints = []
+        self.waypoints = list()
         for wp in waypoints:
             msg = PoseStamped()
             msg.header.frame_id = 'map'
@@ -492,12 +317,12 @@ def main(argv=sys.argv[1:]):
     # wait a few seconds to make sure entire stacks are up
     #time.sleep(10)
 
-    wps = [[1.0, 0.0], [2.0, 0.0]]
+    # wps = [[1.0, 0.0], [2.0, 0.0]]
     starting_pose = [0.0, 0.0]
 
     test = WaypointFollowerTest()
     #test.dumpCostmap()
-    test.setWaypoints(wps)
+    # test.setWaypoints(wps)
 
     retry_count = 0
     retries = 2
@@ -515,6 +340,7 @@ def main(argv=sys.argv[1:]):
     test.moveToFrontiers()
 
     rclpy.spin(test)
+
     # result = test.run(True)
     # assert result
 
