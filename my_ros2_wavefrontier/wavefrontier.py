@@ -75,8 +75,9 @@ class WaypointFollowerTest(Node):
         self.action_client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
         self.lastWaypoint = None
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
-        self.pub_waypoints = self.create_publisher(PoseStamped, 'waypoints', 1)
         self.pub_markers_frontiers = self.create_publisher(MarkerArray, 'markers_frontiers', 1)
+        self.pub_markers_queue_map = self.create_publisher(MarkerArray, 'queue_map', 1)
+        self.pub_markers_queue_frontier = self.create_publisher(MarkerArray, 'queue_frontier', 1)
 
         self.costmapClient = self.create_client(GetCostmap, '/global_costmap/get_costmap')
         while not self.costmapClient.wait_for_service(timeout_sec=1.0):
@@ -105,11 +106,18 @@ class WaypointFollowerTest(Node):
     def occupancyGridCallback(self, msg):
         self.costmap = frontier.OccupancyGrid2d(msg)
 
-    def moveToFrontiers(self):
-        frontiers = frontier.getFrontier(self.currentPose, self.costmap, self.currentPose, self.get_logger())
+    def _clear_rviz_markers(self):
+        msg = utils.Rviz.get_msg_markers_delete_all()
+        self.pub_markers_frontiers.publish(msg)
+        self.pub_markers_queue_map.publish(msg)
+        self.pub_markers_queue_frontier.publish(msg)
 
-        msg_markers_delete_all = utils.Rviz.get_msg_markers_delete_all()
-        self.pub_markers_frontiers.publish(msg_markers_delete_all)
+    def moveToFrontiers(self):
+        self._clear_rviz_markers()
+
+        frontiers = frontier.getFrontier(master=self, is_pub_queue=False)
+
+        self._clear_rviz_markers()
 
         msg_markers_frontiers = utils.Rviz.get_msg_markers_frontiers(frontiers=frontiers)
         self.pub_markers_frontiers.publish(msg_markers_frontiers)
@@ -131,7 +139,6 @@ class WaypointFollowerTest(Node):
         action_request.poses = self.waypoints
 
         self.info_msg('Sending goal request...')
-        self.pub_waypoints.publish(self.waypoints[0])
         send_goal_future = self.action_client.send_goal_async(action_request)
         try:
             rclpy.spin_until_future_complete(self, send_goal_future)

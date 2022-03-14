@@ -1,16 +1,18 @@
 from enum import Enum
 import math
 
+import utils
+
 OCC_THRESHOLD = 10
 MIN_FRONTIER_SIZE = 20
 DISTANCE_THRESHOLD = 0.25  # m
 
 
 class PointClassification(Enum):
-    MapOpen = 1
-    MapClosed = 2
-    FrontierOpen = 4
-    FrontierClosed = 8
+    MapOpen = 1        # 0001
+    MapClosed = 2      # 0010
+    FrontierOpen = 4   # 0100
+    FrontierClosed = 8 # 1000
 
 
 class OccupancyGrid2d():
@@ -100,7 +102,10 @@ def findFree(mx, my, costmap):
 
     return (mx, my)
 
-def getFrontier(pose, costmap, currentPose, logger):
+def getFrontier(master, is_pub_queue):
+    pose = master.currentPose
+    costmap = master.costmap
+
     fCache = FrontierCache()
     fCache.clear()
 
@@ -116,11 +121,12 @@ def getFrontier(pose, costmap, currentPose, logger):
     while len(mapPointQueue) > 0:
         p = mapPointQueue.pop(0)
 
-        if p.classification & PointClassification.MapClosed.value != 0:  # True when p is MapClosed
+        if p.classification & PointClassification.MapClosed.value != 0:
+            # -- True when p is MapClosed
             continue
 
-        if isFrontierPoint(p, costmap, fCache, currentPose, True):
-            p.classification = p.classification | PointClassification.FrontierOpen.value
+        if isFrontierPoint(p, costmap, fCache, pose, True):
+            p.classification = PointClassification.FrontierOpen.value
             frontierQueue = [p]
             newFrontier = list()
 
@@ -128,21 +134,27 @@ def getFrontier(pose, costmap, currentPose, logger):
                 q = frontierQueue.pop(0)
 
                 if q.classification & (PointClassification.MapClosed.value | PointClassification.FrontierClosed.value) != 0:
+                    # -- True when q is MapClosed or FrontierClosed
                     continue
 
-                if isFrontierPoint(q, costmap, fCache, currentPose, False):
+                if isFrontierPoint(q, costmap, fCache, pose, False):
                     newFrontier.append(q)
 
                     for w in getNeighbors(q, costmap, fCache):
                         if w.classification & (PointClassification.FrontierOpen.value | PointClassification.FrontierClosed.value | PointClassification.MapClosed.value) == 0:
-                            w.classification = w.classification | PointClassification.FrontierOpen.value
+                            # -- True when w is neither FrontierOpen, FrontierClosed nor MapClosed
+                            w.classification = PointClassification.FrontierOpen.value
                             frontierQueue.append(w)
 
-                q.classification = q.classification | PointClassification.FrontierClosed.value
+                q.classification = PointClassification.FrontierClosed.value
+
+                if is_pub_queue:
+                    msg = utils.Rviz.get_msg_markers_queue_frontier(frontierQueue, costmap)
+                    master.pub_markers_queue_frontier.publish(msg)
 
             newFrontierCords = list()
             for x in newFrontier:
-                x.classification = x.classification | PointClassification.MapClosed.value
+                x.classification = PointClassification.MapClosed.value
                 newFrontierCords.append(costmap.mapToWorld(x.mapX, x.mapY))
 
             if len(newFrontier) > MIN_FRONTIER_SIZE:
@@ -150,11 +162,17 @@ def getFrontier(pose, costmap, currentPose, logger):
 
         for v in getNeighbors(p, costmap, fCache):
             if v.classification & (PointClassification.MapOpen.value | PointClassification.MapClosed.value) == 0:
+                # -- True when v is neither MapOpen nor MapClosed
                 if any(costmap.getCost(x.mapX, x.mapY) == OccupancyGrid2d.CostValues.FreeSpace.value for x in getNeighbors(v, costmap, fCache)):
-                    v.classification = v.classification | PointClassification.MapOpen.value
+                    # -- True when anyone of neighbors is free
+                    v.classification = PointClassification.MapOpen.value
                     mapPointQueue.append(v)
 
-        p.classification = p.classification | PointClassification.MapClosed.value  # 1 | 2 => 3, 0 | 2 => 2
+        p.classification = PointClassification.MapClosed.value
+
+        if is_pub_queue:
+            msg = utils.Rviz.get_msg_markers_queue_map(mapPointQueue, costmap)
+            master.pub_markers_queue_map.publish(msg)
 
     return frontiers
 
@@ -168,11 +186,11 @@ def getNeighbors(point, costmap, fCache):
 
     return neighbors
 
-def isFrontierPoint(point, costmap, fCache, currentPose, check_dist):
+def isFrontierPoint(point, costmap, fCache, pose, check_dist):
     # -- check distance to robot, for sometimes the point is too near to robot
     if check_dist:
         wx, wy = costmap.mapToWorld(point.mapX, point.mapY)
-        dist = math.sqrt(((wx - currentPose.position.x)**2) + ((wy - currentPose.position.y)**2))
+        dist = math.sqrt(((wx - pose.position.x)**2) + ((wy - pose.position.y)**2))
         if dist < DISTANCE_THRESHOLD:
             return False
 
