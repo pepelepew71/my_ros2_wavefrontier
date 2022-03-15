@@ -78,6 +78,7 @@ class WaypointFollowerTest(Node):
         self.pub_markers_frontiers = self.create_publisher(MarkerArray, 'markers_frontiers', 1)
         self.pub_markers_queue_map = self.create_publisher(MarkerArray, 'queue_map', 1)
         self.pub_markers_queue_frontier = self.create_publisher(MarkerArray, 'queue_frontier', 1)
+        self.pub_markers_demo = self.create_publisher(MarkerArray, 'demo', 1)
 
         self.costmapClient = self.create_client(GetCostmap, '/global_costmap/get_costmap')
         while not self.costmapClient.wait_for_service(timeout_sec=1.0):

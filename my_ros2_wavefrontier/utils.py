@@ -69,6 +69,35 @@ class Rviz:
         return msg
 
     @staticmethod
+    def get_msg_markers_demo(points, costmap):
+        msg = MarkerArray()
+        count = 0
+        for p in points:
+            marker = Marker()
+            marker.header.frame_id = "/map"
+            marker.id = count
+            count += 1
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            wx, wy = costmap.mapToWorld(p.mapX, p.mapY)
+            marker.pose.position.x = wx
+            marker.pose.position.y = wy
+            marker.pose.position.z = 0.0
+            marker.pose.orientation.x = 0.0
+            marker.pose.orientation.y = 0.0
+            marker.pose.orientation.z = 0.0
+            marker.pose.orientation.w = 1.0
+            marker.scale.x = 0.025
+            marker.scale.y = 0.025
+            marker.scale.z = 0.025
+            marker.color.a = 1.0
+            marker.color.r = 0.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+            msg.markers.append(marker)
+        return msg
+
+    @staticmethod
     def get_msg_markers_delete_all():
         msg = MarkerArray()
         marker = Marker()

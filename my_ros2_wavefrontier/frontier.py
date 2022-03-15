@@ -5,7 +5,7 @@ import utils
 
 OCC_THRESHOLD = 10
 MIN_FRONTIER_SIZE = 20
-DISTANCE_THRESHOLD = 0.25  # m
+DISTANCE_THRESHOLD = 0.2  # m
 
 
 class PointClassification(Enum):
@@ -47,8 +47,10 @@ class OccupancyGrid2d():
         if (wx < self.map.info.origin.position.x or wy < self.map.info.origin.position.y):
             raise Exception("World coordinates out of bounds")
 
-        mx = int((wx - self.map.info.origin.position.x) / self.map.info.resolution)
-        my = int((wy - self.map.info.origin.position.y) / self.map.info.resolution)
+        # mx = int((wx - self.map.info.origin.position.x) / self.map.info.resolution)
+        # my = int((wy - self.map.info.origin.position.y) / self.map.info.resolution)
+        mx = round((wx - self.map.info.origin.position.x) / self.map.info.resolution)
+        my = round((wy - self.map.info.origin.position.y) / self.map.info.resolution)
 
         if  (my > self.map.info.height or mx > self.map.info.width):
             raise Exception("Out of bounds")
@@ -96,7 +98,8 @@ def findFree(mx, my, costmap):
             return (loc.mapX, loc.mapY)
 
         for n in getNeighbors(loc, costmap, fCache):
-            if n.classification & PointClassification.MapClosed.value == 0:
+            # if n.classification & PointClassification.MapClosed.value == 0:
+            if n.classification & (PointClassification.MapOpen.value | PointClassification.MapClosed.value) == 0:
                 n.classification = n.classification | PointClassification.MapClosed.value
                 bfs.append(n)
 
@@ -130,6 +133,10 @@ def getFrontier(master, is_pub_queue):
             frontierQueue = [p]
             newFrontier = list()
 
+            if is_pub_queue:
+                msg = utils.Rviz.get_msg_markers_delete_all()
+                master.pub_markers_demo.publish(msg)
+
             while len(frontierQueue) > 0:
                 q = frontierQueue.pop(0)
 
@@ -139,6 +146,9 @@ def getFrontier(master, is_pub_queue):
 
                 if isFrontierPoint(q, costmap, fCache, pose, False):
                     newFrontier.append(q)
+                    if is_pub_queue:
+                        msg_markers_demo = utils.Rviz.get_msg_markers_demo(newFrontier, costmap)
+                        master.pub_markers_demo.publish(msg_markers_demo)
 
                     for w in getNeighbors(q, costmap, fCache):
                         if w.classification & (PointClassification.FrontierOpen.value | PointClassification.FrontierClosed.value | PointClassification.MapClosed.value) == 0:
