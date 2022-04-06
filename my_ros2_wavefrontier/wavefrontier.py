@@ -14,16 +14,14 @@
 # limitations under the License.
 
 from enum import Enum
-import pathlib
-import sys; sys.path.append(str(pathlib.Path(__file__).parent.absolute()))
 import time
+from typing import List
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav2_msgs.action import FollowWaypoints
 from nav2_msgs.srv import ManageLifecycleNodes
 from nav2_msgs.srv import GetCostmap
-# from nav2_msgs.msg import Costmap
 from nav_msgs.msg  import OccupancyGrid
 from nav_msgs.msg import Odometry
 from visualization_msgs.msg import MarkerArray
@@ -31,13 +29,10 @@ from visualization_msgs.msg import MarkerArray
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
-# from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy
-# from rclpy.qos import QoSProfile
 
-# from my_ros2_wavefrontier import utils
-# from my_ros2_wavefrontier import frontier
-import utils
-import frontier
+from . import utils
+from . import frontier
+
 
 class Costmap2d():
     class CostValues(Enum):
@@ -65,7 +60,7 @@ class Costmap2d():
         return my * self.map.metadata.size_x + mx
 
 
-class WaypointFollowerTest(Node):
+class WaypointFollower(Node):
 
     def __init__(self):
         super().__init__(node_name='wave_frontier_follower', namespace='')
@@ -86,20 +81,8 @@ class WaypointFollowerTest(Node):
 
         self.initial_pose_received = False
         self.goal_handle = None
-
-        # pose_qos = QoSProfile(
-        #   durability=QoSDurabilityPolicy.RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL,
-        #   reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_RELIABLE,
-        #   history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_LAST,
-        #   depth=1)
-
-        # self.model_pose_sub = self.create_subscription(Odometry,'/odom', self.poseCallback, pose_qos)
         self.model_pose_sub = self.create_subscription(Odometry, '/odom', self.poseCallback, 1)
-
-        # # self.costmapSub = self.create_subscription(Costmap(), '/global_costmap/costmap_raw', self.costmapCallback, pose_qos)
-        # self.costmapSub = self.create_subscription(OccupancyGrid(), '/map', self.occupancyGridCallback, pose_qos)
         self.costmapSub = self.create_subscription(OccupancyGrid(), '/map', self.occupancyGridCallback, 1)
-
         self.costmap = None
 
         self.get_logger().info('Running Waypoint Test')
@@ -132,7 +115,6 @@ class WaypointFollowerTest(Node):
         location = None
         location = [utils.get_centroid(frontiers[index])]
 
-        #worldFrontiers = [self.costmap.mapToWorld(f[0], f[1]) for f in frontiers]
         self.info_msg(f'World points {location}')
         self.setWaypoints(location)
 
@@ -171,8 +153,6 @@ class WaypointFollowerTest(Node):
             self.info_msg('Goal failed to process all waypoints, missed {0} wps.'.format(len(result.missed_waypoints)))
             # return False
 
-        #self.currentPose = self.waypoints[len(self.waypoints) - 1].pose
-
         self.moveToFrontiers()
 
     def costmapCallback(self, msg):
@@ -202,7 +182,6 @@ class WaypointFollowerTest(Node):
         time.sleep(1)
 
     def poseCallback(self, msg):
-        # self.info_msg('Received amcl_pose')
         self.currentPose = msg.pose.pose
         self.initial_pose_received = True
 
@@ -319,66 +298,28 @@ class WaypointFollowerTest(Node):
         self.get_logger().error(msg)
 
 
-def main(argv=sys.argv[1:]):
+def main():
     rclpy.init()
 
-    # wait a few seconds to make sure entire stacks are up
-    #time.sleep(10)
+    starting_pose: List[float, float] = [0.0, 0.0]
+    wf = WaypointFollower()
 
-    # wps = [[1.0, 0.0], [2.0, 0.0]]
-    starting_pose = [0.0, 0.0]
-
-    test = WaypointFollowerTest()
-    #test.dumpCostmap()
-    # test.setWaypoints(wps)
-
-    retry_count = 0
-    retries = 2
-    while not test.initial_pose_received and retry_count <= retries:
+    retry_count: int = 0
+    retries: int = 2
+    while not wf.initial_pose_received and retry_count <= retries:
         retry_count += 1
-        test.info_msg('Setting initial pose')
-        test.setInitialPose(starting_pose)
-        test.info_msg('Waiting for amcl_pose to be received')
-        rclpy.spin_once(test, timeout_sec=1.0)  # wait for poseCallback
+        wf.info_msg('Setting initial pose')
+        wf.setInitialPose(starting_pose)
+        wf.info_msg('Waiting for amcl_pose to be received')
+        rclpy.spin_once(wf, timeout_sec=1.0)  # wait for poseCallback
 
-    while test.costmap == None:
-        test.info_msg('Getting initial map')
-        rclpy.spin_once(test, timeout_sec=1.0)
+    while wf.costmap == None:
+        wf.info_msg('Getting initial map')
+        rclpy.spin_once(wf, timeout_sec=1.0)
 
-    test.moveToFrontiers()
+    wf.moveToFrontiers()
 
-    rclpy.spin(test)
-
-    # result = test.run(True)
-    # assert result
-
-    # # preempt with new point
-    # test.setWaypoints([starting_pose])
-    # result = test.run(False)
-    # time.sleep(2)
-    # test.setWaypoints([wps[1]])
-    # result = test.run(False)
-
-    # # cancel
-    # time.sleep(2)
-    # test.cancel_goal()
-
-    # # a failure case
-    # time.sleep(2)
-    # test.setWaypoints([[100.0, 100.0]])
-    # result = test.run(True)
-    # assert not result
-    # result = not result
-
-    # test.shutdown()
-    # test.info_msg('Done Shutting Down.')
-
-    # if not result:
-    #     test.info_msg('Exiting failed')
-    #     exit(1)
-    # else:
-    #     test.info_msg('Exiting passed')
-    #     exit(0)
+    rclpy.spin(wf)
 
 
 if __name__ == '__main__':

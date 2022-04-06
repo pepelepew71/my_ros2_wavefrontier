@@ -1,7 +1,7 @@
 from enum import Enum
 import math
 
-import utils
+from . import utils
 
 OCC_THRESHOLD = 10
 MIN_FRONTIER_SIZE = 20
@@ -47,8 +47,6 @@ class OccupancyGrid2d():
         if (wx < self.map.info.origin.position.x or wy < self.map.info.origin.position.y):
             raise Exception("World coordinates out of bounds")
 
-        # mx = int((wx - self.map.info.origin.position.x) / self.map.info.resolution)
-        # my = int((wy - self.map.info.origin.position.y) / self.map.info.resolution)
         mx = round((wx - self.map.info.origin.position.x) / self.map.info.resolution)
         my = round((wy - self.map.info.origin.position.y) / self.map.info.resolution)
 
@@ -98,7 +96,6 @@ def findFree(mx, my, costmap):
             return (loc.mapX, loc.mapY)
 
         for n in getNeighbors(loc, costmap, fCache):
-            # if n.classification & PointClassification.MapClosed.value == 0:
             if n.classification & (PointClassification.MapOpen.value | PointClassification.MapClosed.value) == 0:
                 n.classification = n.classification | PointClassification.MapClosed.value
                 bfs.append(n)
