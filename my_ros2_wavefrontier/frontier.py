@@ -84,7 +84,7 @@ class FrontierCache():
         self.cache = {}
 
 
-def findFree(mx, my, costmap):
+def find_first_free(mx, my, costmap):
     fCache = FrontierCache()
 
     bfs = [fCache.getPoint(mx, my)]
@@ -93,7 +93,12 @@ def findFree(mx, my, costmap):
         loc = bfs.pop(0)
 
         if costmap.getCost(loc.mapX, loc.mapY) == OccupancyGrid2d.CostValues.FreeSpace.value:
-            return (loc.mapX, loc.mapY)
+            # -- avoid only 1 spot free point
+            for n in getNeighbors(loc, costmap, fCache):
+                if costmap.getCost(n.mapX, n.mapY) != OccupancyGrid2d.CostValues.FreeSpace.value:
+                    break
+            else:
+                return (loc.mapX, loc.mapY)
 
         for n in getNeighbors(loc, costmap, fCache):
             if n.classification & (PointClassification.MapOpen.value | PointClassification.MapClosed.value) == 0:
@@ -111,7 +116,7 @@ def getFrontier(master, is_pub_queue):
 
     mx, my = costmap.worldToMap(pose.position.x, pose.position.y)
 
-    freePoint = findFree(mx, my, costmap)
+    freePoint = find_first_free(mx, my, costmap)
     start = fCache.getPoint(freePoint[0], freePoint[1])
     start.classification = PointClassification.MapOpen.value
     mapPointQueue = [start]
